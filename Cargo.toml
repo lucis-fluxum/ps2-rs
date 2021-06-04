@@ -12,4 +12,4 @@ edition = "2018"
 
 [dependencies]
 bitflags = "1.2.1"
-x86_64 = "0.14.1-beta"
+x86_64 = "0.14.3"
