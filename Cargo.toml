@@ -1,6 +1,6 @@
 [package]
 name = "ps2"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Luc Street <lucis-fluxum@users.noreply.github.com>"]
 description = "A general PS/2 device driver for nightly Rust."
 readme = "README.md"
