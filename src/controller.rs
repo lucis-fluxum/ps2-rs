@@ -12,7 +12,7 @@ use crate::{
 
 const DATA_REGISTER: u16 = 0x60;
 const COMMAND_REGISTER: u16 = 0x64;
-const TIMEOUT: u16 = 10_000;
+const DEFAULT_TIMEOUT: usize = 10_000;
 
 type Result<T> = core::result::Result<T, ControllerError>;
 
@@ -51,20 +51,27 @@ pub(crate) enum Command {
 pub struct Controller {
     command_register: Port<u8>,
     data_register: Port<u8>,
+    timeout: usize,
 }
 
 impl Controller {
-    /// Create a handle to the PS/2 controller.
+    /// Create a handle to the PS/2 controller. Uses a default IO timeout of 10,000 tries.
     ///
     /// # Safety
     ///
-    /// This should usually only be called once. Only one `Controller` should be able to access the
-    /// command and data ports at a given time. Ensure that IO ports `0x60` and `0x64` are not
-    /// accessed by any other code.
+    /// Ensure that IO ports `0x60` and `0x64` are not accessed by any other code, and that only
+    /// one `Controller` accesses those ports at any point in time.
     pub const unsafe fn new() -> Self {
+        Self::with_timeout(DEFAULT_TIMEOUT)
+    }
+
+    /// Like `new`, but allows specifying an IO timeout, which is the number of times an IO
+    /// operation will be attempted before returning [`ControllerError::Timeout`].
+    pub const unsafe fn with_timeout(timeout: usize) -> Self {
         Self {
             command_register: Port::new(COMMAND_REGISTER),
             data_register: Port::new(DATA_REGISTER),
+            timeout,
         }
     }
 
@@ -84,37 +91,31 @@ impl Controller {
     }
 
     fn wait_for_read(&mut self) -> Result<()> {
-        let mut timeout = TIMEOUT;
-        while !self
-            .read_status()
-            .contains(ControllerStatusFlags::OUTPUT_FULL)
-            && timeout > 0
-        {
-            timeout -= 1;
+        let mut cycles = 0;
+        while cycles < self.timeout {
+            if self
+                .read_status()
+                .contains(ControllerStatusFlags::OUTPUT_FULL)
+            {
+                return Ok(());
+            }
+            cycles += 1;
         }
-
-        if timeout == 0 {
-            Err(ControllerError::Timeout)
-        } else {
-            Ok(())
-        }
+        Err(ControllerError::Timeout)
     }
 
     fn wait_for_write(&mut self) -> Result<()> {
-        let mut timeout = TIMEOUT;
-        while self
-            .read_status()
-            .contains(ControllerStatusFlags::INPUT_FULL)
-            && timeout > 0
-        {
-            timeout -= 1;
+        let mut cycles = 0;
+        while cycles < self.timeout {
+            if !self
+                .read_status()
+                .contains(ControllerStatusFlags::INPUT_FULL)
+            {
+                return Ok(());
+            }
+            cycles += 1;
         }
-
-        if timeout == 0 {
-            Err(ControllerError::Timeout)
-        } else {
-            Ok(())
-        }
+        Err(ControllerError::Timeout)
     }
 
     pub(crate) fn write_command(&mut self, command: Command) -> Result<()> {
@@ -125,7 +126,7 @@ impl Controller {
 
     /// Read a byte from the data buffer once it is full.
     ///
-    /// If there is no data available to read within a small timeout, this will return
+    /// If there is no data available to read within the configured timeout, this will return
     /// [`ControllerError::Timeout`].
     pub fn read_data(&mut self) -> Result<u8> {
         self.wait_for_read()?;
@@ -133,6 +134,9 @@ impl Controller {
     }
 
     /// Write a byte to the data buffer once it is empty.
+    ///
+    /// If a write cannot be performed within the configured timeout, this will return
+    /// [`ControllerError::Timeout`].
     pub fn write_data(&mut self, data: u8) -> Result<()> {
         self.wait_for_write()?;
         unsafe { self.data_register.write(data) };
